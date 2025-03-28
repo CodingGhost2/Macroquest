@@ -1,0 +1,315 @@
+|- RGMERC.mac
+
+| Meat and potatoes of rgmercs
+#include rgmercs\lib\rgheader.inc
+
+|- Uncomment if you would like to use an rgcustom.inc for
+|- custom RG behavior where allowed. A guide to rgcustom.inc is
+|- provided here: <GUIDE NOT YET AVAILABLE>
+|-
+|- Note: You may copy and paste subs into rgcustom.inc and edit those
+|- Which will override existing rgmercs subs. You do not need to touch
+|- The original code.
+#include_optional rgmercs\rgcustom.inc
+
+Sub Main(string ma_name)
+
+	| Set up the trace call stack.
+	PUSHCALL
+	CALLINGSUB
+	CALLINGINDEX
+
+    |- We're going to have class macros temporarily start this macro Known bug
+    |- that mq2 will skip the first line to execute so we're making it useless.
+    /declare Temporary string local stuff
+    |- Makes sure multiple RGs run slightly off
+	/delay ${Math.Rand[10]}
+    
+    |- Clears the event queue w/o processing and starts fresh
+	/doevents flush
+	
+	|- Pause CWTN Plugins to avoid automation conflicts
+    /call PrintGroupMessage "Pausing the CWTN Plugin on this host If it exists! (/${Me.Class.ShortName} pause on)"
+	/squelch /docommand /${Me.Class.ShortName} pause on
+	
+    /if (${ma_name.Length}) {
+        /popup Targeting ${ma_name} for Main Assist
+        /call SetTarget ${Spawn[${ma_name}].ID}
+    }
+
+    |- General RG Setup
+    /call RGInit "${Me.Class.ShortName}" "2023 Larions Song!"
+
+    /call OuterVarInit
+    /call Heal_Init    
+    /call ${Me.Class.ShortName}_Setup
+    /call Pull_Init
+    /call ModeSetup
+    /call SetControlToon
+    /call LastMove
+
+    /if (${SubDefined[RGCustom_Init]}) /call RGCustom_Init
+
+    |- Handle pet settings
+    /if (${RG_CanUseAA[Companion's Discipline]}) {
+        /pet ghold on
+    } else {
+	    /pet hold on
+    }
+
+    |-Cursor ID
+	/if (${Cursor.ID}) {
+		/echo Sending Item on Cursor to Bag
+		/autoinventory
+	}
+	/call WelcomeMsg
+	/if (${assistid}==${Me.ID}) {
+		/echo \aw I am Main Assist
+	} else {
+		/echo \aw Assisting \ay >> \ag ${assistname} \ay << \aw at \ag ${AutoAssistAt[SETTINGVAL]}%
+	}
+
+	| Clear the call stack
+	POPCALL
+
+    |- Stop anything currently casting/singing
+    /stopcast
+    /stopsong
+    /while (TRUE) {
+        |- PROFILESTART
+        /if (${MainLoopOn}) {
+            /call LastMove
+            
+            |**
+            /if (${Me.Zoning}) {
+                /call Zoning
+            }
+            **|
+            
+            /if (${Me.Hovering}) /call DeathSub
+            /if (${Cursor.ID}) /call BagModRods
+            |- /if (${Me.Song[Restless Ice].ID}) /call Thawice
+            |- Check thawme queue -- could be moved to CLR/SHM_Heal_Routine
+            /if ( ${Select[${Me.Class.ShortName},CLR,SHM,DRU]} && ${Me.HaveExpansion[26]} ) /call ThawmeQueueCheck
+            /if (${SetControlToon[]} && FINDTARGETCHECK) /call FindTarget FROMHERE
+            /if (${Ok2Engage[]}) /call EngageTarget FROMHERE
+            
+            | Mpg Trials Fear Check
+            /if ( ${DoMpgFearTrial[SETTINGVAL]} ) {
+                /call MpgFearTrial
+            }
+            |- Mez Check goes here
+            /if ( ${IsMezzing} ) {
+                /if (${SubDefined[RGCustom_Mezzing]}) /call RGCustom_Mezzing
+                /if (DOMEZCHECK) /call DoMez
+            }
+
+            |- Healing occurs in and out of combat
+            |- If we're a tank, in combat, and don't have aggro on our target, don't heal.
+            /if (${IsHealing} && !(${IsTanking} && ${XAssist.XTFullHaterCount} && (${Me.TargetOfTarget.ID} != ${Me.ID} && ${Me.TargetOfTarget.ID} != ${Me.Pet.ID})) ) {
+                    /if (${SubDefined[RGCustom_Healing]}) /call RGCustom_Healing
+                |- Do a rez check if we're out of combat
+                /if (${RezTimer} == 0 && ${SubDefined[${Me.Class.ShortName}_DoRez]}) {
+                    /if (${SpawnCount[REZSEARCHGROUP]}) {
+                        /call ${Me.Class.ShortName}_DoRez ${NearestSpawn[REZSEARCHGROUP].ID}
+                        /if (${Macro.Return}) {
+                            /echo \awNOTICE:\ax Just rezzed. Resetting Rez Timer to ${RetryRezDelay[SETTINGVAL]}s
+                            /varset RezTimer ${RetryRezDelay[SETTINGVAL]}s
+                        }
+                    }
+                    /if (${SpawnCount[REZSEARCHME]}) {
+                        /call ${Me.Class.ShortName}_DoRez ${NearestSpawn[REZSEARCHME].ID}
+                        /if (${Macro.Return}) {
+                            /echo \awNOTICE:\ax Just rezzed. Resetting Rez Timer to ${RetryRezDelay[SETTINGVAL]}s
+                            /varset RezTimer ${RetryRezDelay[SETTINGVAL]}s
+                        }
+                    }
+
+                    /if (${AssistOutside[SETTINGVAL]}) {
+                        /call Heal_OOGCheckAndRez
+                    }
+                }
+                /if (DOHEALCHECK && ${DoHeals[SETTINGVAL]} ) /call ${Me.Class.ShortName}_Heal_Routine  
+            }
+
+            |- Handles state for when we're in combat
+            /if (DOCOMBATACTIONS && !(${PriorityHealing[]})) {
+                |- IsHealing or IsMezzing should re-determine their target as this point because they may
+                |- have switched off to mez or heal after the initial find target check and the target
+                |- may have changed by this point.
+                /if (FINDTARGETCHECK && (${IsHealing} || ${IsMezzing})) /call FindTarget FROMHERE
+                /if (${SubDefined[RGCustom_Combat_Routine]}) /call RGCustom_Combat_Routine
+                /if (${DoMercenary[SETTINGVAL]}) {
+                    /if (MERCENGAGE) {
+                        /if (${Me.Mercenary.Class.ShortName.Equal[WAR]} && ${Me.Mercenary.Stance.NotEqual[Aggressive]}) {
+                            /squelch /stance aggressive
+                        }
+                         /if (${Me.Mercenary.Class.ShortName.NotEqual[WAR]} && ${Me.Mercenary.Stance.NotEqual[Balanced]}) {
+                            /squelch /stance balanced
+                        }                       
+                        /call Bind_MercAssist
+                    } else {
+                        /if (${Me.Mercenary.Class.ShortName.NotEqual[CLR]} && ${Me.Mercenary.Stance.NotEqual[Passive]}) /squelch /stance passive
+                    }
+                }
+            /if (DOFOLLOW) /call FollowToon
+                /call ${Me.Class.ShortName}_Combat_Routine FROMHERE
+            }
+
+            /if (DOFOLLOW) /call FollowToon
+            /if (DOCAMP) {
+                /if (${SubDefined[RGCustom_Downtime]}) /call RGCustom_Downtime
+                /if  ( !${BurnAuto[SETTINGVAL]} ) {
+                 /varset BurnSize[SETTINGVAL] 0
+                }
+		    /varset WardsPlease 0
+                |- Reset rotations here --
+                |- The class specific sub needs to be removed and should
+                |- instead be handled by the Reset_Rotations subroutine
+                |- in this file. MARKED FOR REMOVAL.
+                /if (${SubDefined[${Me.Class.ShortName}_Reset_Rotations]}) {
+                    /call ${Me.Class.ShortName}_Reset_Rotations
+                }
+                /if (${DoMercenary[SETTINGVAL]}) {
+                    /if (${Me.Mercenary.Class.ShortName.NotEqual[CLR]} && ${Me.Mercenary.Stance.NotEqual[Passive]}) /squelch /stance passive
+                }
+                /call Reset_Rotations
+                /call Reset_Variables
+                /call AutoCampCheck
+            } 
+            /if (${DoBuffCheck[]} && !(${PriorityHealing[]})) {
+                /if (!${Bool[${Me.Fellowship.CampfireZone}]} && ${ZoneID}==${Zone.ID} && ${MaintainCampfire[SETTINGVAL]}) /call Bind_Campfire
+                    /if  ( !${BurnAuto[SETTINGVAL]} ) {
+                        /varset BurnSize[SETTINGVAL] 0
+                    }
+		/if ( ${DoShrink[SETTINGVAL]} && ${ShrinkName[SETTINGVAL].NotEqual[NULL]} && ${Me.Height} > 2) /call ShrinkCheck
+                /call ${Me.Class.ShortName}_Downtime_Routine
+                /if (${Select[${Me.Class.ShortName},RGCASTERS]}) {
+                    /if (${BuffGroup_Defined[]} && !${BuffTimer}) {
+                        /varset BuffTimer 300
+                        |- Now handle group buffs
+                        /if (${groupbufftimer}==0) /varset groupbufftimer 10s
+                        /if (!${Defined[curmember]}) /declare curmember int local 0
+                        /for curmember 0 to  ${Group}
+                            /if (${Group.Member[${curmember}].Distance}<100 && !${Group.Member[${curmember}].OtherZone} && !${Me.Casting.ID} ) {
+                                /call BuffGroup_GroupCheckThenCast ${curmember}
+                            }
+                            /if (${XAssist.XTFullHaterCount}) /break
+                            TRIGGERBIND
+                        /next curmember
+                        /call BuffGroup_NoDanNet
+                        /if (${AssistOutside[SETTINGVAL]} && !${XAssist.XTFullHaterCount}) {
+			            |    /call BuffGroup_NoDanNet
+                            /call BuffGroup_XTCheckThenCast
+                        }
+                    }
+                    /call MiscGemRemem
+                }
+
+                |- Delay pulls if we've set the setting, the timer is at 0, and we've just finished a pull.
+                /if (${PullDelay[SETTINGVAL]} && !${Pull_DelayTimer} && ${Pull_State} != PULL_IDLE) {
+                    /varset Pull_DelayTimer ${PullDelay[SETTINGVAL]}
+                    /varset Pull_State PULL_IDLE
+                } 
+
+            }
+            |- Insert Mercenary handling here
+            /if (${DoModRod[SETTINGVAL]}) /call ClickModRoD
+            /if (${DoMed[SETTINGVAL]}) /call AutoMed FROMHERE
+            /if (KILLTGTRESET) {
+                /varset KillTargetID 0
+                /varset autotargetid 0
+            }
+            /if (${IsCuring} && ${SubDefined[${Me.Class.ShortName}_DoCure]}) /call ${Me.Class.ShortName}_DoCure
+
+            |- Revive our mercenary if they're dead and we're using a mercenary
+            /if (${DoMercenary[SETTINGVAL]}) {
+                /if (${Mercenary.State.Equal[DEAD]}) {
+                    /if (${Window[MMGW_ManageWnd].Child[MMGW_SuspendButton].Text.Equal[Revive]}) {
+                        /call Bind_UnsuspendMerc
+                        /delay 5s ${Window[MMGW_ManageWnd].Child[MMGW_SuspendButton].Text.NotEqual[Revive]}
+                    }
+                } else {
+                    |- Turn off Auto Assist if it's on
+                    /if (${Window[MMGW_ManageWnd].Child[MMGW_AssistModeCheckbox].Checked}) {
+                        /notify MMGW_ManageWnd MMGW_AssistModeCheckbox leftmouseup
+                        /delay 5s !${Window[MMGW_ManageWnd].Child[MMGW_AssistModeCheckbox].Checked}
+                    }
+                }
+            }
+        } else {
+            |- Wait a bit if our mainloop is off. 
+            /delay 1
+        }
+        TRIGGERBIND
+        /if (${CPUThrottle[SETTINGVAL]}) {
+            /delay ${CPUThrottle[SETTINGVAL]}
+        }
+        |- PROFILESTOP
+
+        POPCALL	
+    }
+
+:OnExit
+
+    /if (!${MacroQuest.LastCommand.Find[/end]}) {
+        /echo \ay LastCMD:       ${MacroQuest.LastCommand}
+        /echo \ay ErrorDateTime: ${Time.Date} ${Time.Time24}
+        /echo \ay ErrorMsg:      ${MacroQuest.Error}
+        /echo \ay DataError:     ${MacroQuest.MQ2DataError}
+        /echo \ay SyntaxError:   ${MacroQuest.SyntaxError}
+        /echo \ay RunningTime:   ${MacroQuest.Running}
+        /echo \ay BuildDate:     ${MacroQuest.BuildDate}
+        /echo \ay CurrentUI:     ${EverQuest.CurrentUI}
+    }
+
+	/if (${Debug}) {
+		/call Bind_CallStack
+	}
+
+    /if (${Pet.ID} && ${Pet.Stance.NotEqual[follow]}) /pet follow
+
+    /mqlog off
+    /endmacro
+
+/return
+
+Sub Reset_Rotations
+    |- Eventually this will reset the standard rotations.
+/return
+
+Sub Reset_Variables
+    |- This will reset all variables set when it manual mode
+|	/varset BindSize 0
+|	/varset WardsPlease 0
+	|Not sure relevance or use of Reset_Rotations, few scenarios currently currently that you'd want to reset
+	|May be more later?  
+/return
+|----------------------------------------------------------------------------
+|- SUB: Event Chat Triggers
+|----------------------------------------------------------------------------
+#Chat group
+#Chat tell
+#Chat raid
+Sub Event_Chat(string ChatType,string ChatSender,string ChatText)
+    |- Only handl ethis event if the caller is a PC
+	/if (${Spawn[pc ${ChatSender}].ID}) { 
+        /if (${ChatType.Equal[tell]}) /mqlog ${ChatSender} -- ${ChatText}
+    
+        /declare _chattarget spawn local 
+        /squelch /vardata _chattarget Spawn[pc ${ChatSender}]
+        
+        /if (${_chattarget.ID}) {
+
+            /if (${SubDefined[${Me.Class.ShortName}_SpecialChats]}) {
+                |- This handles special long-form chat beg. Eventually this could be rolled
+                |- in to an extention of the ChatBegList data type.
+                /call ${Me.Class.ShortName}_SpecialChats "${ChatText}" ${_chattarget.ID}
+            }
+
+            |- Handle the ChatBegList.
+            /call ChatBegList_Proc ${Me.Class.ShortName}Begs "${ChatText}" ${_chattarget.ID} 
+        }
+    }
+/return
+        

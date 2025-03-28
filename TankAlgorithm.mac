@@ -1,0 +1,590 @@
+|**
+* Movement Task Management - Updated Variables
+**|
+Sub Main
+    /declare run int outer 1
+    /declare hurt bool outer FALSE
+    /declare selfbuff bool outer FALSE
+    /declare groupbuff bool outer FALSE
+    /declare target int outer 0
+    /declare group int outer 0
+    /declare gethits bool outer FALSE
+    /declare i int outer
+    /declare mana int outer 0
+    /declare engaged bool outer FALSE
+    /declare haveSpells bool outer TRUE
+    /declare dead bool outer FALSE
+    /declare hasCorpse bool outer FALSE
+    /declare corpseRecovered bool outer TRUE
+    /declare partyMembers[10] string outer
+    /declare lastTaunt timer outer 0
+    /declare tauntCooldown int outer 6
+    /declare fullMana int outer 100
+    /declare searchRadius int outer 150
+    /declare closestNPC int outer 0
+    /declare npcDistance float outer 999.0
+    /declare huntingMode bool outer FALSE
+    /declare pathAttempts int outer 0
+    /declare maxPathAttempts int outer 3
+    /declare formationDistance int outer 15
+    /declare lastPositionCommand timer outer 0
+    /declare positionInterval int outer 10
+    /declare tankX float outer 0
+    /declare tankY float outer 0
+    /declare tankZ float outer 0
+    /declare tankHeading float outer 0
+    /declare portalCheckTimer timer outer 0
+    /declare portalCheckInterval int outer 30
+    /declare prioritizeCorpse bool outer FALSE
+    /declare corpseSearchTimer timer outer 0
+    /declare corpseSearchInterval int outer 10
+    /declare corpseX float outer 0
+    /declare corpseY float outer 0
+    /declare corpseZ float outer 0
+    /declare corpseZone string outer
+    /declare usingPortal bool outer FALSE
+    /declare portalDestination string outer
+    
+    |** New movement task management variables **|
+    /declare currentMovementTask string outer "none"  |** Options: none, corpse, combat, portal, explore **|
+    /declare movementTaskComplete bool outer TRUE
+    /declare movementTimeout timer outer 0
+    /declare maxMovementTime int outer 120          |** 2 minutes max for any movement task **|
+    
+    /echo Starting Enhanced Tank Algorithm with Single Movement Task Focus
+    
+    |** Get party member count **|
+    /echo Enter the number of party members:
+    /varset group ${Int[${MacroQuest.InputBox[Enter party size]}]}
+    
+    |** Get party member names **|
+    /for i 1 to ${group}
+        /varset partyMembers[${i}] ${MacroQuest.InputBox[Enter name for group member ${i}]}
+        /echo Added ${partyMembers[${i}]} to group roster
+    /next i
+    
+    |** Initialize: Memorize spells if needed **|
+    /call Memorize ${haveSpells}
+    
+    |** Check if dead at start **|
+    /call CheckForCorpse
+    /if (${Macro.Return}) {
+        /varset currentMovementTask "corpse"
+        /varset movementTaskComplete FALSE
+        /varset movementTimeout ${Time.Time}
+    }
+    |** Main loop **|
+    :MainLoop
+    /if (${run}) {
+        |** Check movement task timeout **|
+        /if (!${movementTaskComplete} && ${movementTimeout.Expired[${maxMovementTime}]}) {
+            /echo Movement task ${currentMovementTask} timed out after ${maxMovementTime} seconds. Resetting.
+            /call CancelMovement
+            /varset movementTaskComplete TRUE
+            /varset currentMovementTask "none"
+        }
+        
+        |** First priority: Check if we have a corpse to recover **|
+        /if (${hasCorpse} && !${corpseRecovered}) {
+            /if (${currentMovementTask.NotEqual["corpse"]} && !${movementTaskComplete}) {
+                /echo Interrupting current movement task ${currentMovementTask} to prioritize corpse recovery
+                /call CancelMovement
+            }
+            
+            /varset currentMovementTask "corpse"
+            /varset movementTaskComplete FALSE
+            
+            /if (${corpseSearchTimer.Expired[${corpseSearchInterval}]}) {
+                /call RecoverCorpse
+                /varset corpseSearchTimer ${Time.Time}
+                
+                |** Check if corpse recovery is complete **|
+                /if (${corpseRecovered}) {
+                    /echo Corpse recovery complete. Freeing up movement system.
+                    /varset movementTaskComplete TRUE
+                    /varset currentMovementTask "none"
+                }
+            }
+            
+            |** Skip other tasks while focusing on corpse recovery **|
+            /goto :SkipCombat
+        }
+        
+        |** Check for portals only if not currently doing another movement task **|
+        /if (${movementTaskComplete} && ${portalCheckTimer.Expired[${portalCheckInterval}]}) {
+            /call CheckForPortals
+            /varset portalCheckTimer ${Time.Time}
+            
+            |** If portal use initiated, set as current task **|
+            /if (${usingPortal}) {
+                /varset currentMovementTask "portal"
+                /varset movementTaskComplete FALSE
+                /varset movementTimeout ${Time.Time}
+                /goto :SkipCombat
+            }
+        }
+        
+        |** If actively using a portal, continue until complete **|
+        /if (${currentMovementTask.Equal["portal"]}) {
+            /echo Continuing portal navigation task. Skipping other actions.
+            /goto :SkipCombat
+        }
+        
+        |** Check if we're being targeted **|
+        /call Targeted
+        /varset gethits ${Macro.Return}
+        
+        |** If not being targeted, taunt to get attention **|
+        /if (!${gethits} && ${lastTaunt.Expired[${tauntCooldown}]}) {
+            /echo Taunt! Get attention!
+            /taunt
+            /varset lastTaunt ${Time.Time}
+        }
+        
+        |** Check if hurt and heal if needed **|
+        /if (${hurt}) {
+            /echo Healing ${Me.Name}
+            /call Heal
+        }
+        
+        |** Get current mana value **|
+        /varset mana ${Me.CurrentMana}
+        
+        |** Regain mana when not engaged and mana is below full **|
+        /if (!${engaged} && ${mana} < ${fullMana}) {
+            /echo Mana is ${mana}/${fullMana}. Sitting down to meditate.
+            /call RegainMana
+        }
+        
+        |** Target engagement - only if not doing another movement task **|
+        /if (${movementTaskComplete}) {
+            /call Target
+            /varset target ${Macro.Return}
+            
+            |** If target found, engage **|
+            /if (${target}==1) {
+                /echo Targeting enemy...
+                /varset engaged TRUE
+                /varset huntingMode FALSE
+                
+                /if (${currentMovementTask.NotEqual["combat"]}) {
+                    /varset currentMovementTask "combat"
+                    /varset movementTaskComplete FALSE
+                    /varset movementTimeout ${Time.Time}
+                }
+                
+                /call Engage TRUE ${target}
+                
+                |** When engaging enemies, manage party positioning **|
+                /if (${lastPositionCommand.Expired[${positionInterval}]}) {
+                    /call ManagePartyPositioning
+                    /varset lastPositionCommand ${Time.Time}
+                }
+                
+                |** Check if combat movement is complete **|
+                /if (${Me.TargetOfTarget.ID}==${Me.ID} && ${Target.Distance} < 10) {
+                    /echo Combat positioning complete
+                    /varset movementTaskComplete TRUE
+                }
+            } else {
+                |** No target found - use map to find enemies if not on another task **|
+                /if (${movementTaskComplete}) {
+                    /varset huntingMode TRUE
+                    /varset currentMovementTask "explore"
+                    /varset movementTaskComplete FALSE
+                    /varset movementTimeout ${Time.Time}
+                    /call FindEnemyUsingMap
+                }
+            }
+        }
+        
+        |** Self buffing **|
+        /if (!${selfbuff}) {
+            /echo Buffing self...
+            /call SelfBuff
+        }
+        
+        |** Group buffing **|
+        /if (!${groupbuff}) {
+            /echo Buffing group...
+            /call GroupBuff
+        }
+        
+        |** Stun enemy if targeted **|
+        /if (${target}==1) {
+            /echo Stunning the enemy.
+            /call Stun
+        }
+        
+        |** Reset engagement status if no target **|
+        /if (${target}==0) {
+            /varset engaged FALSE
+        }
+        
+        |** Prioritize aggro management if target exists but not targeting us **|
+        /if (${target}==1 && !${gethits} && ${Target.Type.Equal[NPC]}) {
+            /echo Re-establishing aggro!
+            /taunt
+        }
+        
+        :SkipCombat
+        |** Pause before next cycle **|
+        /delay 1s
+        /goto :MainLoop
+    }
+    /return
+
+|**
+* Movement Task Management Functions
+**|
+Sub MemorizeSpells(bool hasSpells)
+    /if (${hasSpells}) {
+        /echo Memorizing spells...
+        /memspellset "Default_Set"
+        /delay 5s
+        /echo Spells memorized successfully.
+    } else {
+        /echo No need to memorize spells.
+    }
+    /return
+    
+Sub CancelMovement
+    /echo Canceling current movement task: ${currentMovementTask}
+    
+    |** Stop any active navigation **|
+    /nav stop
+    
+    |** Stop any active stick **|
+    /stick off
+    
+    |** Stop any keyboard movement **|
+    /keypress forward
+    /keypress back
+    /keypress strafe_left
+    /keypress strafe_right
+    
+    /delay 1s
+    /return
+
+Sub RecoverCorpse
+    /echo Prioritizing corpse recovery... (Movement Task: ${currentMovementTask})
+    
+    |** Check if we're in the correct zone for corpse recovery **|
+    /if (${corpseZone.NotEqual[${Zone.Name}]} && ${corpseZone.Length}) {
+        /echo Corpse is in zone ${corpseZone}, but we're in ${Zone.Name}. Looking for portal.
+        /call FindZonePortal "${corpseZone}"
+        /return FALSE
+    }
+    
+    |** If we're in the right zone, locate the corpse **|
+    /echo In the correct zone for corpse. Searching for corpse.
+    /corpsecount
+    /delay 1s
+    
+    /if (${Corpse.Count} > 0) {
+        /echo Found corpse. Dedicated to this task until completion.
+        
+        |** Use the corpse command to locate/target **|
+        /corpse
+        /delay 2s
+        
+        |** If corpse is too far away, move toward it **|
+        /if (${Corpse.Distance} > 20) {
+            /echo Corpse is ${Corpse.Distance} units away. Moving to it.
+            /nav corpse
+            /return FALSE
+        } else {
+            |** We're close enough, loot the corpse **|
+            /echo Close enough to loot corpse.
+            /corpse
+            /delay 1s
+            
+            |** Loot all items **|
+            /notify LootWnd LW_LootAllButton leftmouseup
+            /delay 3s
+            
+            |** Confirm completion **|
+            /if (${Window[LootWnd].Open}) {
+                /notify LootWnd LW_DoneButton leftmouseup
+            }
+            
+            |** Check if we have a second corpse **|
+            /corpsecount
+            /delay 1s
+            /if (${Corpse.Count} == 0) {
+                /echo All corpses recovered!
+                /varset corpseRecovered TRUE
+                /varset hasCorpse FALSE
+                
+                |** Re-equip our gear **|
+                /call ReequipGear
+                
+                /return TRUE
+            } else {
+                /echo Still have ${Corpse.Count} corpses to recover.
+                /return FALSE
+            }
+        }
+    } else {
+        /echo No corpses found in this zone.
+        /varset corpseRecovered TRUE
+        /varset hasCorpse FALSE
+        /return TRUE
+    }
+
+Sub UsePortal(int portalID)
+    /echo Approaching portal...
+    
+    |** Target and move to the portal **|
+    /target id ${portalID}
+    /nav target
+    
+    |** Wait until we reach the portal **|
+    :PortalApproach
+    /if (${Target.Distance} > 10) {
+        /echo Portal approach in progress. Distance: ${Target.Distance}
+        /delay 2s
+        /goto :PortalApproach
+    }
+    
+    |** Once close enough, try to activate the portal **|
+    /echo Portal reached. Attempting to activate...
+    
+    |** Try right-clicking first **|
+    /click right target
+    /delay 2s
+    
+    |** If that doesn't work, try other methods **|
+    /if (!${Zone.ShortName.Equal[${portalDestination}]}) {
+        /echo First activation attempt failed. Trying alternative methods...
+        
+        |** Try clicking directly on the object **|
+        /target id ${portalID}
+        /click left target
+        /delay 3s
+        
+        |** If that fails, try keyboard interaction **|
+        /keypress e
+        /delay 3s
+    }
+    
+    |** Check if zone changed **|
+    /if (${Zone.ShortName.NotEqual[${portalDestination}]}) {
+        /echo Portal appears to have worked - zone change detected!
+        /varset usingPortal FALSE
+        /varset movementTaskComplete TRUE
+        /varset currentMovementTask "none"
+        /return TRUE
+    } else {
+        /echo Portal activation attempts unsuccessful.
+        /varset usingPortal FALSE
+        /varset movementTaskComplete TRUE
+        /varset currentMovementTask "none"
+        /return FALSE
+    }
+
+Sub FindEnemyUsingMap
+    /echo Searching for enemies using map...
+    /varset closestNPC 0
+    /varset npcDistance 999.0
+    
+    |** First check if any party members are in combat **|
+    /for i 1 to ${group}
+        /if (${Spawn[pc ${partyMembers[${i}]}].CombatState.Equal[COMBAT]}) {
+            /echo Party member ${partyMembers[${i}]} is in combat! Moving to assist.
+            /target pc ${partyMembers[${i}]}
+            /delay 1s
+            /nav target
+            /delay 5s
+            /assist ${partyMembers[${i}]}
+            
+            |** This exploration task is complete when we reach the party member **|
+            /if (${Spawn[pc ${partyMembers[${i}]}].Distance} < 20) {
+                /varset movementTaskComplete TRUE
+            }
+            
+            /return TRUE
+        }
+    /next i
+    
+    |** Find the closest NPC using map data **|
+    /echo Looking for closest NPC within ${searchRadius} units...
+    /declare npcID int local
+    /declare npcList[100] int local
+    /declare npcCount int local 0
+    
+    |** Build a list of NPCs in range **|
+    /for npcID 1 to ${Spawn.Count}
+        /if (${Spawn[${npcID}].Type.Equal[NPC]} && ${Spawn[${npcID}].Distance} < ${searchRadius} && !${Spawn[${npcID}].Dead} && !${Spawn[${npcID}].Name.Find[corpse]} && ${Spawn[${npcID}].Level} <= ${Math.Calc[${Me.Level}+3]}) {
+            /echo Found NPC: ${Spawn[${npcID}].Name} (ID: ${npcID}) at distance ${Spawn[${npcID}].Distance}
+            /varset npcCount ${Math.Calc[${npcCount}+1]}
+            /varset npcList[${npcCount}] ${npcID}
+        }
+    /next npcID
+    
+    |** Find the closest NPC from our list **|
+    /for i 1 to ${npcCount}
+        /if (${Spawn[${npcList[${i}]}].Distance} < ${npcDistance}) {
+            /varset closestNPC ${npcList[${i}]}
+            /varset npcDistance ${Spawn[${closestNPC}].Distance}
+        }
+    /next i
+    
+    |** Navigate to the closest NPC if found **|
+    /if (${closestNPC} > 0) {
+        /echo Found closest NPC: ${Spawn[${closestNPC}].Name} at distance ${npcDistance}
+        /target id ${closestNPC}
+        /echo Using MQ2Nav to path to target
+        /nav target
+        /varset pathAttempts 0
+        
+        |** Mark task as complete when we reach the NPC **|
+        /if (${Target.Distance} < 15) {
+            /varset movementTaskComplete TRUE
+            /echo Reached target NPC. Movement task complete.
+        }
+        
+        /return TRUE
+    } else {
+        |** No NPCs found in current area, try exploring a bit **|
+        /call ExploreArea
+        /return FALSE
+    }
+    
+Sub ExploreArea
+    /echo No enemies found nearby. Exploring the area...
+    
+    |** First check if a party member is exploring we can follow **|
+    /for i 1 to ${group}
+        /if (${Spawn[pc ${partyMembers[${i}]}].ID} && !${Spawn[pc ${partyMembers[${i}]}].CombatState.Equal[COMBAT]}) {
+            /echo Following party member ${partyMembers[${i}]} to explore
+            /target pc ${partyMembers[${i}]}
+            /nav target
+            
+            |** Mark task as complete when we reach the party member **|
+            /if (${Spawn[pc ${partyMembers[${i}]}].Distance} < 20) {
+                /varset movementTaskComplete TRUE
+                /echo Reached party member. Movement task complete.
+            }
+            
+            /delay 10s
+            /return TRUE
+        }
+    /next i
+    
+    |** If no party members to follow, generate a random point to explore **|
+    /declare exploreX float local ${Math.Calc[${Me.X}+${Math.Rand[-100,100]}]}
+    /declare exploreY float local ${Math.Calc[${Me.Y}+${Math.Rand[-100,100]}]}
+    
+    |** Use the map system to try to find a path to that location **|
+    /echo Exploring to coordinates X:${exploreX} Y:${exploreY}
+    /nav locxyz ${exploreX} ${exploreY} ${Me.Z}
+    
+    |** Check if path is possible **|
+    /if (!${Navigation.PathExists}) {
+        /echo No path found to random location. Trying another direction.
+        /varset pathAttempts ${Math.Calc[${pathAttempts}+1]}
+        
+        |** If we've tried too many times, just move forward a bit **|
+        /if (${pathAttempts} >= ${maxPathAttempts}) {
+            /echo Multiple path attempts failed. Moving forward.
+            /keypress forward hold
+            /delay 5s
+            /keypress forward
+            /varset pathAttempts 0
+            
+            |** Mark this exploration as complete **|
+            /varset movementTaskComplete TRUE
+            /echo Basic exploration complete. Movement task complete.
+        }
+    } else {
+        /echo Path found to explore location. Moving...
+        /varset pathAttempts 0
+        
+        |** Wait until we reach the location **|
+        /declare startX float local ${Me.X}
+        /declare startY float local ${Me.Y}
+        /declare distanceMoved float local 0
+        
+        /delay 10s
+        
+        |** Calculate how far we've moved **|
+        /varset distanceMoved ${Math.Sqrt[${Math.Calc[(${Me.X}-${startX})*(${Me.X}-${startX}) + (${Me.Y}-${startY})*(${Me.Y}-${startY})]}]}
+        
+        |** If we've moved a significant distance, mark as complete **|
+        /if (${distanceMoved} > 30 || !${Navigation.Active}) {
+            /varset movementTaskComplete TRUE
+            /echo Exploration complete. Moved ${distanceMoved} units. Movement task complete.
+        }
+    }
+    /return TRUE
+
+|**
+* Dynamic Buff Functions
+**|
+
+Sub SelfBuff
+    /echo Checking available self buffs
+    
+    |** Get a list of memorized spells **|
+    /declare spellCount int local ${Me.NumSpellGems}
+    /declare spellID int local 0
+    /declare spellName string local
+    
+    |** Loop through memorized spells and cast any self buffs **|
+    /for spellID 1 to ${spellCount}
+        /varset spellName ${Me.Gem[${spellID}]}
+        
+        |** Check if this is a self buff spell (only cast if it's not already active) **|
+        /if (${Me.SpellReady[${spellName}]} && ${Spell[${spellName}].TargetType.Equal[Self]} && !${Me.Buff[${spellName}].ID}) {
+            /echo Casting self buff: ${spellName}
+            /cast ${spellID}
+            /delay 5s
+        }
+    /next spellID
+    
+    /varset selfbuff TRUE
+    /return
+
+Sub GroupBuff
+    /echo Checking available group buffs
+    
+    |** Get a list of memorized spells **|
+    /declare spellCount int local ${Me.NumSpellGems}
+    /declare spellID int local 0
+    /declare spellName string local
+    /declare targetID int local 0
+    
+    |** Loop through memorized spells **|
+    /for spellID 1 to ${spellCount}
+        /varset spellName ${Me.Gem[${spellID}]}
+        
+        |** Check if this is a buff that can be cast on others **|
+        /if (${Me.SpellReady[${spellName}]} && (${Spell[${spellName}].TargetType.Equal[Single]} || ${Spell[${spellName}].TargetType.Equal[Group]})) {
+            
+            |** For group buffs, cast once **|
+            /if (${Spell[${spellName}].TargetType.Equal[Group]}) {
+                /echo Casting group buff: ${spellName}
+                /cast ${spellID}
+                /delay 5s
+            } else {
+                |** For single target buffs, cast on each group member **|
+                /for targetID 1 to ${group}
+                    /if (${Spawn[pc ${partyMembers[${targetID}]}].ID}) {
+                        /target ${partyMembers[${targetID}]}
+                        /delay 1s
+                        
+                        |** Only cast if they don't already have the buff **|
+                        /if (!${Target.Buff[${spellName}].ID}) {
+                            /echo Casting ${spellName} on ${partyMembers[${targetID}]}
+                            /cast ${spellID}
+                            /delay 5s
+                        }
+                    }
+                /next targetID
+            }
+        }
+    /next spellID
+    
+    /varset groupbuff TRUE
+    /return

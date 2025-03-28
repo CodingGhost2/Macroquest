@@ -1,0 +1,74 @@
+| test.mac: simple test program created to demonstrate macro programming for CS431 class.
+| Purpose: Make group members and casting SK invis to undead
+| Author: Dr. Ronny L. Bull
+
+| Main
+Sub Main
+
+| /echo commands go to console window
+/echo This goes to debug console window
+
+| showing usage of global objects
+/echo ${Me.Name} is a level ${Me.Level} ${Me.Race} ${Me.Class}
+
+| mem spell IVU to slot 8
+/memspell 8 "Invisibility versus Undead"
+
+| we can get a group member count!
+/echo there are ${Group} other members in the party!
+
+| setting a variable as global (would use local instead of outer for local variables)
+/declare j int outer
+
+| a for loop example to loop through group members and cast IVU on them
+/for j 1 to ${Group} { &nbsp;
+
+	| delay for spell refresh
+	/delay 10s
+
+	| target the j'th group member
+	/target ${Group.Member[${j}].CleanName}
+
+	| check to see if they are invis
+	/if ( !${Target.Invis} ) {
+
+		| verbosity
+		/echo Making ${Group.Member[${j}].CleanName} the ${Group.Member[${j}].Race} ${Group.Member[${j}].Class} invisible to undead
+
+		| cast the spell
+		/cast "Invisibility versus Undead"
+
+	} else {
+
+		| verbosity
+		/echo ${Group.Member[${j}].CleanName} is already invisible!
+
+	}
+
+}
+| advance j in loop
+/next j
+
+| hurry up and wait!
+/delay 10s
+
+| target myself
+/target ${Me.Name}
+
+| invis check - this works but we are not ivis cause we just cast on everyone else
+/if ( !${Me.Invis} ) {
+
+	| going through the motions
+	/echo Making myself invisible to undead
+
+	/cast "Invisibility versus Undead"
+
+} else {
+
+	| more verbosity
+	/echo You are already invisible!
+
+}
+
+| end macro
+/return

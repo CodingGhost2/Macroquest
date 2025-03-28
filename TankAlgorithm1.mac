@@ -1,0 +1,440 @@
+
+Sub Main
+    /declare run bool outer TRUE
+    /declare hurt bool outer FALSE
+    /declare buffed bool outer FALSE
+    /declare targetID int outer 0
+    /declare hatePct int outer 100
+    /declare hateTauntThreshold int outer 50
+    /declare groupSize int outer 0  
+    /declare groupMembers[6] string outer
+    /declare groupMemberIDs[6] int outer
+    /declare preferredMemberName string outer "Geezus"
+    /declare preferredMemberID int outer 0
+    /declare returnToMember bool outer TRUE
+    /declare spellTime int outer 45
+    /declare memTime int outer 60    // Longer memorization time
+    /declare taskComplete bool outer TRUE
+    /declare currentTask string outer "None"
+    /declare fizzleRetries int outer 0
+    /declare maxFizzles int outer 3
+    /declare i int outer 0            
+    /declare spellsMemorized bool outer FALSE
+    /declare spellAttempts int outer 0
+    /declare maxSpellAttempts int outer 3
+    
+    /echo "Tank Macro Started"
+    
+    // Improved spell memorization routine
+    /call MemorizeSpells
+    /call SetupGroup
+    
+    :MainLoop
+    /if (${run}) {
+        /if (${taskComplete}) {
+            /if (!${buffed}) {
+                /varset currentTask "Buffing Self & Group"
+                /varset taskComplete FALSE
+                /call BuffAll
+            }
+            
+            /call CheckHealth
+            /call CheckTarget
+            
+            /if (${returnToMember} && ${taskComplete} && ${targetID} == 0) {
+                /varset currentTask "Returning to Teammate"
+                /varset taskComplete FALSE
+                /call ReturnToTeammate
+            }
+            
+            /if (${hurt} && ${taskComplete}) {
+                /varset currentTask "Healing"
+                /varset taskComplete FALSE
+                /call Heal
+            }
+            
+            /if (${targetID} != 0 && ${taskComplete}) {
+                /varset currentTask "Combat Actions"
+                /varset taskComplete FALSE
+                /call CombatSequence
+            } else /if (${targetID} == 0 && ${taskComplete}) {
+                /varset currentTask "Finding Enemy"
+                /varset taskComplete FALSE
+                /call FindEnemy
+            }
+        } else {
+            /echo "Performing: ${currentTask}"
+            /delay 2
+        }
+        
+        /delay 2
+        /goto :MainLoop
+    }
+    /return
+
+Sub MemorizeSpells
+    /varset currentTask "Memorizing Spells"
+    /varset taskComplete FALSE
+    
+    /echo "Starting spell memorization process - will try up to ${maxSpellAttempts} times"
+    /varset spellAttempts 0
+    
+    :MemorizeSpellsLoop
+    /varcalc spellAttempts ${spellAttempts} + 1
+    /echo "Spell memorization attempt ${spellAttempts} of ${maxSpellAttempts}"
+    
+    /echo "Memorizing Minor Healing to gem 1..."
+    /memspell 1 "Minor Healing"
+    /delay ${memTime}
+    
+    /echo "Memorizing Yaulp to gem 2..."
+    /memspell 2 "Yaulp"
+    /delay ${memTime}
+    
+    /echo "Memorizing Courage to gem 3..."
+    /memspell 3 "Courage"
+    /delay ${memTime}
+    
+    /echo "Memorizing Flash of Light to gem 4..."
+    /memspell 4 "Flash of Light"
+    /delay ${memTime}
+    
+    /echo "Verifying spells..."
+    /if (${Me.SpellReady[Minor Healing]} && ${Me.SpellReady[Yaulp]} && ${Me.SpellReady[Courage]} && ${Me.SpellReady[Flash of Light]}) {
+        /echo "All spells successfully memorized!"
+        /varset spellsMemorized TRUE
+    } else {
+        /echo "Some spells not memorized yet."
+        /echo "Minor Healing: ${If[${Me.SpellReady[Minor Healing]},OK,MISSING]}"
+        /echo "Yaulp: ${If[${Me.SpellReady[Yaulp]},OK,MISSING]}"
+        /echo "Courage: ${If[${Me.SpellReady[Courage]},OK,MISSING]}"
+        /echo "Flash of Light: ${If[${Me.SpellReady[Flash of Light]},OK,MISSING]}"
+        
+        /if (${spellAttempts} < ${maxSpellAttempts}) {
+            /echo "Trying again in 5 seconds..."
+            /delay 5s
+            /goto :MemorizeSpellsLoop
+        } else {
+            /echo "WARNING: Could not memorize all spells after ${maxSpellAttempts} attempts."
+            /echo "Proceeding with available spells. Some functions may be limited."
+        }
+    }
+    
+    /varset taskComplete TRUE
+    /return
+
+Sub SetupGroup
+    /varset currentTask "Setting Up Group"
+    /varset taskComplete FALSE
+
+    /varset groupSize ${Group.Members}
+    /echo "Group size: ${groupSize}"
+    
+    /if (${groupSize} > 0) {
+        /for i 1 to ${groupSize}
+            /varset groupMembers[${i}] ${Group.Member[${i}].Name}
+            /varset groupMemberIDs[${i}] ${Group.Member[${i}].ID}
+            
+            /if (${groupMembers[${i}].Equal[${preferredMemberName}]}) {
+                /varset preferredMemberID ${groupMemberIDs[${i}]}
+                /echo "Found teammate: ${preferredMemberName}"
+            }
+        /next i
+        
+        /if (${preferredMemberID} == 0) {
+            /echo "Preferred teammate not found, using leader"
+            /varset preferredMemberID ${Group.Leader.ID}
+            /varset preferredMemberName ${Group.Leader.Name}
+        }
+    } else {
+        /echo "No group detected, will operate solo"
+    }
+
+    /varset taskComplete TRUE
+    /return
+
+Sub BuffAll
+    /varset currentTask "Buffing All"
+    /varset taskComplete FALSE
+
+    /echo "Buffing self first..."
+    /target ${Me.Name}
+    /delay 2
+
+    /varset fizzleRetries 0
+    :CourseCastRetry
+    /cast 3 // Courage
+    /delay ${spellTime}
+    
+    /if (${Cast.Result.Equal[FIZZLE]} && ${fizzleRetries} < ${maxFizzles}) {
+        /varcalc fizzleRetries ${fizzleRetries} + 1
+        /goto :CourseCastRetry
+    }
+    
+    /varset fizzleRetries 0
+    :YaulpSelfRetry
+    /cast 2 // Yaulp
+    /delay ${spellTime}
+    
+    /if (${Cast.Result.Equal[FIZZLE]} && ${fizzleRetries} < ${maxFizzles}) {
+        /varcalc fizzleRetries ${fizzleRetries} + 1
+        /goto :YaulpSelfRetry
+    }
+    
+    /if (${groupSize} > 0) {
+        /for i 1 to ${groupSize}
+            /if (${Spawn[id ${groupMemberIDs[${i}]}].ID} && ${groupMemberIDs[${i}]} != ${Me.ID}) {
+                /echo "Buffing ${groupMembers[${i}]}"
+                /target id ${groupMemberIDs[${i}]}
+                /delay 2
+                
+                /varset fizzleRetries 0
+                :GroupBuffRetry
+                /cast 3 // Courage
+                /delay ${spellTime}
+                
+                /if (${Cast.Result.Equal[FIZZLE]} && ${fizzleRetries} < ${maxFizzles}) {
+                    /varcalc fizzleRetries ${fizzleRetries} + 1
+                    /goto :GroupBuffRetry
+                }
+                
+                /varset fizzleRetries 0
+                :GroupYaulpRetry
+                /cast 2 // Yaulp
+                /delay ${spellTime}
+                
+                /if (${Cast.Result.Equal[FIZZLE]} && ${fizzleRetries} < ${maxFizzles}) {
+                    /varcalc fizzleRetries ${fizzleRetries} + 1
+                    /goto :GroupYaulpRetry
+                }
+            }
+        /next i
+    }
+    
+    /varset buffed TRUE
+    /varset taskComplete TRUE
+    /return
+
+Sub CombatSequence
+    /varset currentTask "Combat Sequence"
+    /varset taskComplete FALSE
+
+    /if (${targetID} != 0) {
+        /target id ${targetID}
+        /delay 2
+        
+        |Make sure we're facing the target
+        /face
+        /delay 1
+        
+        |Ensure auto-attack is on
+        /if (!${Me.Combat}) {
+            /echo "Activating auto-attack"
+            /attack on
+            /delay 1
+        }
+        
+        |Use bash ability (hotkey 2)
+        /echo "Using Bash ability"
+        /face
+        /keypress 2
+        /delay 5
+        
+        |Check hate and taunt if needed
+        /varset hatePct ${Target.PctAggro}
+        /if (${hatePct} < ${hateTauntThreshold}) {
+            /echo "Hate low (${hatePct}%), taunting!"
+            /doability "Taunt"
+            /delay 10
+        }
+        
+        |Use Flash of Light on enemy
+        /varset fizzleRetries 0
+        :FlashRetry
+        /echo "Using Flash of Light on ${Target.Name}"
+        /face
+        /cast 4
+        /delay ${spellTime}
+        
+        /if (${Cast.Result.Equal[FIZZLE]} && ${fizzleRetries} < ${maxFizzles}) {
+            /varcalc fizzleRetries ${fizzleRetries} + 1
+            /goto :FlashRetry
+        }
+        
+        |After combat, return to teammate
+        /if (${Target.Type.Equal[CORPSE]} || ${Target.ID} == 0) {
+            /varset targetID 0
+            /varset returnToMember TRUE
+        }
+    }
+    
+    /varset taskComplete TRUE
+    /return
+
+Sub CheckHealth
+    /varset currentTask "Checking Health"
+    /varset taskComplete FALSE
+
+    /if (${Me.PctHPs} < 50) {
+        /varset hurt TRUE
+    } else {
+        /varset hurt FALSE
+    }
+    
+    /varset taskComplete TRUE
+    /return
+
+Sub Heal
+    /varset currentTask "Healing"
+    /varset taskComplete FALSE
+
+    /if (${Me.PctHPs} < 50) {
+        /echo "Healing self"
+        /target ${Me.Name}
+        /delay 2
+        
+        /varset fizzleRetries 0
+        :HealRetry
+        /cast 1
+        /delay ${spellTime}
+        
+        /if (${Cast.Result.Equal[FIZZLE]} && ${fizzleRetries} < ${maxFizzles}) {
+            /varcalc fizzleRetries ${fizzleRetries} + 1
+            /goto :HealRetry
+        }
+    }
+    /varset hurt FALSE
+    
+    /varset taskComplete TRUE
+    /return
+
+Sub CheckTarget
+    /varset currentTask "Checking Target"
+    /varset taskComplete FALSE
+
+    /if (${Target.ID} && ${Target.Type.NotEqual[CORPSE]} && ${Target.Type.NotEqual[PC]}) {
+        /varset targetID ${Target.ID}
+        
+        |If we get aggro, set flag to return to teammate after
+        /if (${Target.TargetOfTarget.ID} == ${Me.ID}) {
+            /varset returnToMember TRUE
+        }
+    } else {
+        /varset targetID 0
+    }
+    
+    /varset taskComplete TRUE
+    /return
+
+Sub FindEnemy
+    /varset currentTask "Finding Enemy"
+    /varset taskComplete FALSE
+    
+    /declare nearestID int local 0
+    /declare nearestDistance float local 9999
+    /declare currentDistance float local 0
+    /declare pullRange float local 100
+    
+    /echo "Searching for nearest enemy using map data..."
+    /keypress esc
+    /delay 1
+    
+    /declare mapSpawnCount int local ${MapSpawn.Count}
+    /echo "Found ${mapSpawnCount} spawns on map"
+    
+    /if (${mapSpawnCount} > 0) {
+        /for i 1 to ${mapSpawnCount}
+            /if (${MapSpawn[${i}].Type.Equal[NPC]} && ${MapSpawn[${i}].Distance} < ${pullRange}) {
+                /varset currentDistance ${MapSpawn[${i}].Distance}
+                
+                /target id ${MapSpawn[${i}].ID}
+                /delay 1 ${Target.ID} == ${MapSpawn[${i}].ID}
+                
+                /if (${Target.ID} && ${Target.ConColor.NotEqual[BLUE]} && ${Target.ConColor.NotEqual[GREEN]} && ${currentDistance} < ${nearestDistance} && ${Target.Type.NotEqual[CORPSE]}) {
+                    /varset nearestDistance ${currentDistance}
+                    /varset nearestID ${Target.ID}
+                    /echo "Found potential enemy: ${Target.Name} (Distance: ${currentDistance})"
+                }
+            }
+        /next i
+    } else {
+        /echo "No spawns found on map, falling back to NearestSpawn method"
+        
+        /for i 1 to 20
+            /if (${NearestSpawn[${i}, npc radius ${pullRange}].ID}) {
+                /varset currentDistance ${NearestSpawn[${i}, npc radius ${pullRange}].Distance}
+                
+                /target id ${NearestSpawn[${i}, npc radius ${pullRange}].ID}
+                /delay 1 ${Target.ID} == ${NearestSpawn[${i}, npc radius ${pullRange}].ID}
+                
+                /if (${Target.ConColor.NotEqual[BLUE]} && ${Target.ConColor.NotEqual[GREEN]} && ${currentDistance} < ${nearestDistance} && ${Target.Type.NotEqual[CORPSE]}) {
+                    /varset nearestDistance ${currentDistance}
+                    /varset nearestID ${Target.ID}
+                    /echo "Found potential enemy: ${Target.Name} (Distance: ${currentDistance})"
+                }
+            }
+        /next i
+    }
+    
+    /if (${nearestID}) {
+        /echo "Found enemy: ${Spawn[${nearestID}].Name}"
+        /target id ${nearestID}
+        /delay 2 ${Target.ID} == ${nearestID}
+        /varset targetID ${nearestID}
+        
+        |Move to enemy
+        /if (${Target.Distance} > 10) {
+            /echo "Moving to target..."
+            /keypress forward hold
+            /face fast
+            
+            /declare moveTimer timer local 30s
+            :EnemyMoveLoop
+            /if (${Target.Distance} <= 10 || ${moveTimer} == 0) {
+                /keypress forward
+                /goto :EndEnemyMoveLoop
+            }
+            /delay 1
+            /goto :EnemyMoveLoop
+            :EndEnemyMoveLoop
+        }
+    } else {
+        /echo "No suitable enemies found."
+    }
+    
+    /varset taskComplete TRUE
+    /return
+
+Sub ReturnToTeammate
+    /varset currentTask "Returning to Teammate"
+    /varset taskComplete FALSE
+
+    /if (${preferredMemberID} != 0 && ${Spawn[id ${preferredMemberID}].ID}) {
+        /echo "Moving to ${preferredMemberName}"
+        /target id ${preferredMemberID}
+        /delay 2
+        
+        /if (${Target.Distance} > 15) {
+            /keypress forward hold
+            /face fast
+            
+            /declare moveTimer timer local 30s
+            :MoveLoop
+            /if (${Target.Distance} <= 10 || ${moveTimer} == 0) {
+                /keypress forward
+                /goto :EndMoveLoop
+            }
+            /delay 1
+            /goto :MoveLoop
+            :EndMoveLoop
+        }
+        
+        /echo "Now with teammate"
+    } else {
+        /echo "Teammate not found, searching for enemies instead"
+        /call FindEnemy
+    }
+    
+    /varset returnToMember FALSE
+    /varset taskComplete TRUE
+    /return
